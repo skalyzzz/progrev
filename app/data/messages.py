@@ -2,6 +2,7 @@ from datetime import datetime
 from functools import wraps
 
 import sqlalchemy
+from datetime import datetime
 from sqlalchemy import orm
 from sqlalchemy_serializer import SerializerMixin
 
