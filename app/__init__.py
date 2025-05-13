@@ -1,19 +1,19 @@
 """Пакет приложения. Содержит фабрику приложений create_app, а также функции,
 используемые в обработчике шаблонов Jinja2."""
 
-import logging
 import os
 import re
 
 from flask import Flask
-from flask_restful import Api
+from flask_jwt_extended import get_current_user
 
-from app.api import auth
+from app.api import api_blueprint
+from app.auth_utils import csrf_protected
 from app.data import db_session
 from app.setup_app import *
-from app.socketio_namespaces import socket_index, socket_main
-from app.views import main, uploads
-from modules import constants
+from app.socketio_namespaces import socket_main
+from app.views import main, uploads, docs
+from modules import constants, md_conversion
 
 
 def translate_wtforms_error(error_text):
@@ -58,36 +58,44 @@ def create_app() -> Flask:
     else:
         app.config.from_object(app_config)
 
+    if not os.path.exists(constants.UPLOAD_PATH):
+        os.makedirs(constants.UPLOAD_PATH)
+
     # Инициализация частей приложения
-    login_manager.init_app(app)
     mail.app = app
     mail.init_app(app)
     socketio.init_app(app)
-    api_ = Api(app)
-
-    # Настройка частей приложения
-    login_manager.login_view = 'main.login'
+    jwt.init_app(app)
+    csrf.init_app(app)
 
     # Регистрация пространств имён Socket.IO
-    socketio.on_namespace(socket_index.IndexNamespace('/index'))
     socketio.on_namespace(socket_main.MainNamespace('/'))
 
     # Регистрация чертежей
     app.register_blueprint(main.blueprint)
     app.register_blueprint(uploads.blueprint)
-
-    # Регистрация API
-    api_.add_resource(auth.AuthResource, '/api/v1/auth')
+    app.register_blueprint(docs.blueprint)
+    app.register_blueprint(api_blueprint, url_prefix='/api/v1/')
 
     # Настройки окружения Jinja2
     app.jinja_env.add_extension('jinja2.ext.do')
-    app.jinja_env.globals['print'] = print
-    app.jinja_env.globals['bool'] = bool
-    app.jinja_env.globals[
-        'translate_wtforms_error'] = translate_wtforms_error
-    app.jinja_env.globals['re'] = re
-    app.jinja_env.globals['constants'] = constants
+    app.add_template_global(print)
+    app.add_template_global(bool)
+    app.add_template_global(translate_wtforms_error)
+    app.add_template_global(re, 're')
+    app.add_template_global(constants, 'constants')
+    app.add_template_global(app, 'current_app')
+    app.context_processor(lambda: dict(current_user=get_current_user()))
+
+    # Генерация документации
+    with app.app_context():
+        md_conversion.convert_all_md('app/docs/',
+                                     'app/docs/cached/')
 
     # Инициализация БД
     db_session.global_init(constants.DB_PATH)
+
+    # Настройка приложения
+    app.before_request(csrf_protected)  # Защита от csrf перед запросом
+
     return app
